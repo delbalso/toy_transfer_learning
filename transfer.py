@@ -1,4 +1,4 @@
-from keras.applications.inception_v3 import InceptionV3
+from keras.applications.inception_v3 import InceptionV3, preprocess_input
 from keras.preprocessing import image
 from keras.models import Model
 from keras.metrics import top_k_categorical_accuracy, categorical_accuracy
@@ -20,7 +20,7 @@ NUM_CLASSES = 10
 
 def evaluate_model(model, data):
     x, y = data
-    gen = ImageDataGenerator()
+    gen = ImageDataGenerator(preprocessing_function=preprocess_input)
     eval_data = model.evaluate_generator(gen.flow(x, y, batch_size=BATCH_SIZE),
                              steps=len(x) / BATCH_SIZE)
     for i, metric_name in enumerate(model.metrics_names):
@@ -64,8 +64,8 @@ def fine_tune(base_models, fine_tune_output, data, data_name):
 
     # Set up the fine tune data
     (x_train, y_train), (x_test, y_test) = data
-    datagen = ImageDataGenerator()
-    val_datagen = ImageDataGenerator()
+    datagen = ImageDataGenerator(preprocessing_function=preprocess_input)
+    val_datagen = ImageDataGenerator(preprocessing_function=preprocess_input)
 
 
     print "x_train shape is {0}, y_train shape is {1}".format(x_train.shape, y_train.shape)
