@@ -2,6 +2,7 @@ from keras.applications.mobilenet import MobileNet, preprocess_input
 from keras import regularizers
 from keras.preprocessing import image
 from keras.callbacks import EarlyStopping
+import pickle
 from keras.models import Model
 from keras.metrics import top_k_categorical_accuracy, categorical_accuracy
 from keras.layers import Dense, GlobalAveragePooling2D, Flatten, Input, Dropout
@@ -112,16 +113,24 @@ def fine_tune(base_models, fine_tune_output, data, data_name):
 
     # Generate inputs to new dense layers
     print "Generating bottleneck features"
-    train_frozen_inner_activations = frozen_model.predict_generator(image_datagen.flow(x=x_train, batch_size=BATCH_SIZE, shuffle=False),
-                                                        steps=len(x_train) / BATCH_SIZE, use_multiprocessing=False)
-    test_frozen_inner_activations = frozen_model.predict_generator(vimage_datagen.flow(x=x_test, batch_size=BATCH_SIZE, shuffle=False),
-                                                        steps=len(x_test) / BATCH_SIZE, use_multiprocessing=False)
+    #train_frozen_inner_activations = frozen_model.predict_generator(image_datagen.flow(x=x_train, batch_size=BATCH_SIZE, shuffle=False),
+    #                                                    steps=len(x_train) / BATCH_SIZE)#, use_multiprocessing=False)
+    #test_frozen_inner_activations = frozen_model.predict_generator(image_datagen.flow(x=x_test, batch_size=BATCH_SIZE, shuffle=False),
+    #                                                    steps=len(x_test) / BATCH_SIZE)#, use_multiprocessing=False)
+
+    #np.save(open( "train_bottlenecks.p", "wb" ),train_frozen_inner_activations)
+    #np.save(open( "test_bottlenecks.p", "wb" ),test_frozen_inner_activations)
+    train_frozen_inner_activations = np.load( open( "train_bottlenecks.p", "rb" ) )
+    test_frozen_inner_activations = np.load( open( "test_bottlenecks.p", "rb" ) )
+
+
+
 
     # Define and compile a model of only the layers on top
     frozen_features_inputs = Input(shape=test_frozen_inner_activations.shape[1:])
     #x = Flatten()(frozen_features_inputs)
     x = Dropout(0.5)(frozen_features_inputs)
-    x = Dense(256, activation='relu', bias_regularizer=regularizers.l2(0.01), kernel_regularizer=regularizers.l2(0.01))(x) # add dropout?
+    x = Dense(256, activation='relu', bias_regularizer=regularizers.l2(0.001), kernel_regularizer=regularizers.l2(0.001))(x) # add dropout?
     x = Dropout(0.5)(x)
     predictions = Dense(NUM_CLASSES, activation='softmax', bias_regularizer=regularizers.l2(0.01), kernel_regularizer=regularizers.l2(0.01))(x)
     top_model = Model(inputs=frozen_features_inputs, outputs=predictions)
@@ -146,7 +155,7 @@ def fine_tune(base_models, fine_tune_output, data, data_name):
                         validation_data=generator(test_frozen_inner_activations, y_test),
                         validation_steps=len(x_test) / BATCH_SIZE,
                         steps_per_epoch=len(x_train) / BATCH_SIZE,
-                        epochs=20, verbose=2,
+                        epochs=50, verbose=2,
                         callbacks=[EarlyStopping(verbose=2)])
 
 
@@ -173,6 +182,7 @@ def fine_tune(base_models, fine_tune_output, data, data_name):
     model.compile(optimizer='rmsprop', loss='categorical_crossentropy', metrics=[
                   categorical_accuracy])
 
+
     print "Full model training accuracy"
     evaluate_model(model, (x_train, y_train))
     print "Full model validation accuracy"
@@ -182,19 +192,19 @@ def fine_tune(base_models, fine_tune_output, data, data_name):
     # and train the remaining top layers.
 
     # Choose to train the top 2 blocks, i.e. we will freeze
-    for layer in model.layers[:70]:
+    for layer in model.layers[:76]:
         layer.trainable = False
-    for layer in model.layers[70:]:
+    for layer in model.layers[76:]:
         layer.trainable = True
-
+    """
     for i, layer in enumerate(model.layers):
         if i<70: continue
         print "{0}: {1} - {2}".format(i, layer.name, layer.trainable)
-
+    """
     # we need to recompile the model for these modifications to take effect
     # we use SGD with a low learning rate
 
-    model.compile(optimizer=SGD(lr=0.01, momentum=0.9),
+    model.compile(optimizer=SGD(lr=0.0001, momentum=0.9),
                   loss='categorical_crossentropy', metrics=[categorical_accuracy])
 
 
@@ -206,16 +216,17 @@ def fine_tune(base_models, fine_tune_output, data, data_name):
 
     # we train our model again (this time fine-tuning the top 2 inception blocks
     # alongside the top Dense layers
-    for i, layer in enumerate(model.layers):
-        print "{0}: {1} - {2}".format(i, layer.name, layer.trainable)
-    print "Stage 2 of {} fine tuning".format(data_name)
-    model.summary()
+    #for i, layer in enumerate(model.layers):
+    #    print "{0}: {1} - {2}".format(i, layer.name, layer.trainable)
+    #print "Stage 2 of {} fine tuning".format(data_name)
+    #model.summary()
     model.fit_generator(image_datagen.flow(x_train, y_train, batch_size=BATCH_SIZE),
                         validation_data=vimage_datagen.flow(
                             x_test, y_test, batch_size=BATCH_SIZE),
                         validation_steps=len(x_test) / BATCH_SIZE,
                         steps_per_epoch=len(x_train) / BATCH_SIZE, use_multiprocessing=False,
-                        epochs=6, verbose=1)
+                        epochs=50, verbose=1,
+                        callbacks=[EarlyStopping(verbose=2)])
 
     print "Stage 2 of {} fine tuning is done.".format(data_name)
     evaluate_model(model, (x_test, y_test))
@@ -229,13 +240,13 @@ base_model = MobileNet(
 #base_model.compile(optimizer='rmsprop', loss='categorical_crossentropy',metrics=[categorical_accuracy, top_k_categorical_accuracy])
 
 # Setup CIFAR-10 output
-x = base_model.get_layer('dropout').output
+x = base_model.get_layer('conv_pw_13_relu').output
 x = GlobalAveragePooling2D()(x)
-x = Dropout(0.5)(x)
-x = Dense(256, activation='relu', bias_regularizer=regularizers.l2(0.01), kernel_regularizer=regularizers.l2(0.01))(x) # add dropout?
-x = Dropout(0.5)(x)
-cifar_predictions = Dense(NUM_CLASSES, activation='softmax', bias_regularizer=regularizers.l2(0.01), kernel_regularizer=regularizers.l2(0.01))(x)
-cifar_data = setup_data(data='CIFAR-10', limit=5000)
+x = Dropout(0.3)(x)
+x = Dense(256, activation='relu', bias_regularizer=regularizers.l2(0.001), kernel_regularizer=regularizers.l2(0.001))(x) # add dropout?
+x = Dropout(0.3)(x)
+cifar_predictions = Dense(NUM_CLASSES, activation='softmax', bias_regularizer=regularizers.l2(0.001), kernel_regularizer=regularizers.l2(0.001))(x)
+cifar_data = setup_data(data='CIFAR-10', limit=10000)
 
 # print "destination model"
 # for i, layer in enumerate(model.layers[-10:]):
